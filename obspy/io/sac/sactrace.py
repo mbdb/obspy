@@ -369,6 +369,12 @@ from . import arrayio as _io
 # See:
 # https://stackoverflow.com/q/2123585
 #
+# TODO: Replace all these factories and properties with Python Descriptors.
+#   http://nbviewer.jupyter.org/urls/gist.github.com/ChrisBeaumont/
+#       5758381/raw/descriptor_writeup.ipynb
+#   Also, don't forget to worry about access to __doc__ on both the class and
+#   the instances.
+#
 # floats
 def _floatgetter(hdr):
     def get_float(self):
@@ -764,13 +770,9 @@ class SACTrace(object):
                   'lcalda': lcalda, 'lpspol': lpspol, 'lovrok': lovrok,
                   'internal0': internal0}
 
-        # required = ['delta', 'b', 'npts', ...]
-        # provided = locals()
-        # for hdr in required:
-        #     header[hdr] = kwargs.pop(hdr, provided[hdr])
-
         # combine header with remaining non-required args.
-        # XXX: user can put non-SAC key:value pairs into the header.
+        # user can put non-SAC key:value pairs into the header, but they're
+        # ignored on write.
         header.update(kwargs)
 
         # -------------------------- DATA ARRAY -------------------------------
@@ -1286,13 +1288,7 @@ class SACTrace(object):
         :type keep_sac_header: bool
 
         """
-        try:
-            header = _ut.obspy_to_sac_header(trace.stats, keep_sac_header)
-        except SacError:
-            # not enough time info in old SAC header
-            # XXX: try to do something besides ignore the old header?
-            header = _ut.obspy_to_sac_header(trace.stats,
-                                             keep_sac_header=False)
+        header = _ut.obspy_to_sac_header(trace.stats, keep_sac_header)
 
         # handle the data headers
         data = trace.data
@@ -1593,7 +1589,7 @@ class SACTrace(object):
         The iztype setter will deal with shifting the time values.
 
         """
-        for hdr in ['b', 'o', 'a', 'f'] + ['t'+str(i) for i in range(10)]:
+        for hdr in ['b', 'o', 'a', 'f'] + ['t' + str(i) for i in range(10)]:
             val = getattr(self, hdr)
             if val is not None:
                 setattr(self, hdr, val + shift)

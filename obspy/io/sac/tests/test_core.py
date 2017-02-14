@@ -82,12 +82,12 @@ class CoreTestCase(unittest.TestCase):
         tr = read(self.filexy, format='SACXY')[0]
         with NamedTemporaryFile() as tf:
             tempfile = tf.name
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter('always')
-                tr.write(tempfile, format='SACXY')
-                self.assertEqual(len(w), 1)
-                self.assertIn('reftime', str(w[-1].message))
+            tr.write(tempfile, format='SACXY')
             tr1 = read(tempfile)[0]
+
+        tr.stats.pop('sac', None)
+        tr1.stats.pop('sac', None)
+
         self.assertEqual(tr, tr1)
 
     def test_read_write_xy_via_obspy(self):
@@ -622,13 +622,12 @@ class CoreTestCase(unittest.TestCase):
         st = _read_sac_xy(self.filexy)
 
         with io.BytesIO() as fh:
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter('always')
-                _write_sac_xy(st, fh)
-                self.assertEqual(len(w), 1)
-                self.assertIn('reftime', str(w[-1].message))
+            _write_sac_xy(st, fh)
             fh.seek(0, 0)
             st2 = _read_sac_xy(fh)
+
+        st[0].stats.pop('sac', None)
+        st2[0].stats.pop('sac', None)
 
         self.assertEqual(st, st2)
 
@@ -640,13 +639,12 @@ class CoreTestCase(unittest.TestCase):
         st = _read_sac_xy(self.filexy)
 
         with NamedTemporaryFile() as tf:
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter('always')
-                _write_sac_xy(st, tf)
-                self.assertEqual(len(w), 1)
-                self.assertIn('reftime', str(w[-1].message))
+            _write_sac_xy(st, tf)
             tf.seek(0, 0)
             st2 = _read_sac_xy(tf)
+
+        st[0].stats.pop('sac', None)
+        st2[0].stats.pop('sac', None)
 
         self.assertEqual(st, st2)
 
@@ -779,11 +777,7 @@ class CoreTestCase(unittest.TestCase):
 
         with NamedTemporaryFile() as tf:
             tempfile = tf.name
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter('always')
-                tr.write(tempfile, format='SAC')
-                self.assertEqual(len(w), 1)
-                self.assertIn('reftime', str(w[-1].message))
+            tr.write(tempfile, format='SAC')
             tr1 = read(tempfile)[0]
 
         # starttime made its way to SAC file
@@ -818,10 +812,7 @@ class CoreTestCase(unittest.TestCase):
 
         with NamedTemporaryFile() as tf:
             tempfile = tf.name
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter('always')
-                tr.write(tempfile, format='SAC')
-                self.assertEqual(len(w), 1)
+            tr.write(tempfile, format='SAC')
             tr1 = read(tempfile)[0]
 
         self.assertEqual(tr1.stats.starttime, tr.stats.starttime)
@@ -883,6 +874,46 @@ class CoreTestCase(unittest.TestCase):
         sac = SACTrace.from_obspy_trace(tr)
         self.assertFalse(sac.lcalda)
         self.assertTrue(sac.lpspol)
+
+    def test_sac_file_from_new_header(self):
+        """
+        Writing to disk a new Trace object shouldn't ignore custom header
+        fields, if an arrival time is set. See ObsPy issue #1519
+        """
+        tr = Trace(np.zeros(1000))
+        tr.stats.delta = 0.01
+        tr.stats.station = 'XXX'
+        tr.stats.sac = {'stla': 10., 'stlo': -5., 'a': 12.34}
+        with io.BytesIO() as tf:
+            tr.write(tf, format='SAC')
+            tf.seek(0)
+            tr1 = read(tf)[0]
+        self.assertAlmostEqual(tr1.stats.sac.stla, 10., places=4)
+        self.assertAlmostEqual(tr1.stats.sac.stlo, -5., places=4)
+        self.assertAlmostEqual(tr1.stats.sac.a, 12.34, places=5)
+
+    def test_always_sac_reftime(self):
+        """
+        Writing a SAC file from a .stats.sac with no reference time should
+        still write a SAC file with a reference time.
+        """
+        reftime = UTCDateTime('2010001')
+        a = 12.34
+        b = 0.0
+        tr = Trace(np.zeros(1000))
+        tr.stats.delta = 0.01
+        tr.stats.station = 'XXX'
+        tr.stats.starttime = reftime
+        tr.stats.sac = {}
+        tr.stats.sac['a'] = a
+        tr.stats.sac['b'] = b
+        with io.BytesIO() as tf:
+            tr.write(tf, format='SAC')
+            tf.seek(0)
+            tr1 = read(tf)[0]
+        self.assertEqual(tr1.stats.starttime, reftime)
+        self.assertAlmostEqual(tr1.stats.sac.a, a, places=5)
+        self.assertEqual(tr1.stats.sac.b, b)
 
 
 def suite():

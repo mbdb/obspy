@@ -54,6 +54,9 @@ class SacHeaderError(SacError):
 
 
 class SacHeaderTimeError(SacHeaderError, ValueError):
+    """
+    Raised if header has invalid "nz" times.
+    """
     pass
 
 
@@ -278,10 +281,9 @@ def utcdatetime_to_sac_nztimes(utcdt):
     return nztimes, microsecond
 
 
-# TODO: do this in SACTrace? has some reftime handling overlap w/ set_reftime.
 def obspy_to_sac_header(stats, keep_sac_header=True):
     """
-    Make a SAC header dictionary from an ObsPy Stats or dict instance.
+    Merge a primary with a secondary header, reconciling some differences.
 
     :param stats: Filled ObsPy Stats header
     :type stats: dict or :class:`~obspy.core.Stats`
@@ -310,78 +312,59 @@ def obspy_to_sac_header(stats, keep_sac_header=True):
         reference time adjustments for micro/milliseconds precision issues.
         SAC headers nvhdr, level, lovrok, and iftype are always produced.
     :type keep_sac_header: bool
+    :rtype merged: dict
+    :return: SAC header
 
     """
     header = {}
     oldsac = stats.get('sac', {})
 
     if keep_sac_header and oldsac:
-        # start with the old header
         header.update(oldsac)
 
-        # The Plan:
-        # 1. Try to get the old SAC reference time.  If you have this, all the
-        #    old SAC header can be kept, with no loss of information.
-        # 2. If the old reftime isn't valid, we can still keep most of the old
-        #    SAC header, just not the relative time headers.  Without a valid
-        #    SAC reftime, their absolute times have been lost, and they can't
-        #    be referenced correctly to anything in the Trace.stats header.
-
         try:
-            # Try to set "b" and "e" using the old SAC 'b' and reftime.
-            # NOTE: if "b" or "e" were null, they will become set here.
             reftime = get_sac_reftime(header)
-            # reftime + b is the old first sample time
-            b = stats['starttime'] - reftime
-            header['b'] = b
-            header['e'] = b + (stats['endtime'] - stats['starttime'])
         except SacHeaderTimeError:
-            # Can't determine reftime. Any relative time headers are lost.
-            # If none are set, and the "iztype" is 9 or null, we will assume
-            # that user intends use the Trace.stats starttime as the reftime.
-            # ObsPy issue 1204
+            reftime = None
 
-            # If there are relative times, even if there's a "b", throw an
-            #   error/warning
-            # If there's a "b" and no relative times, use it and proceed
-            # If there's no "b" and no relative times, write it like it's an
-            #   "ib" type file and back away slowly
+        relhdrs = [hdr for hdr in HD.RELHDRS
+                   if header.get(hdr) not in (None, HD.SNULL)]
 
-            relhdrs = ['t' + str(i) for i in range(10)] + ['a', 'f']
-            has_relhdrs = any([header.get(hdr) not in (None, HD.SNULL)
-                               for hdr in relhdrs])
-            has_b = header.get('b') not in (None, HD.FNULL)
-            if has_relhdrs:
-                msg = ("Invalid reference time, unrecoverable relative time"
-                       " headers.")
-                raise SacHeaderError(msg)
-            elif has_b:
-                header['e'] = header['b'] + (stats['endtime'] -
-                                             stats['starttime'])
+        if reftime:
+            # Set current 'b' relative to the old reftime.
+            b = stats['starttime'] - reftime
+        else:
+            # Invalid reference time. Relative times like 'b' cannot be
+            # unambiguously referenced to stats.starttime.
+            if 'b' in relhdrs:
+                # Assume no trimming/expanding of the Trace occurred relative
+                # to the old 'b', and just use the old 'b' value.
+                b = header['b']
             else:
-                reftime = stats['starttime']
-                nztimes, microsecond = utcdatetime_to_sac_nztimes(reftime)
-                header.update(nztimes)
-                header['b'] = microsecond * 1e-6
-                header['e'] = header['b'] +\
-                    (stats['npts'] - 1) * stats['delta']
+                # Assume it's an iztype=ib (9) type file. Also set iztype?
+                b = 0
 
-            msg = "Old header has invalid reftime."
-            warnings.warn(msg)
+            # Set the stats.starttime as the reftime and set 'b' and 'e'.
+            # ObsPy issue 1204
+            reftime = stats['starttime'] - b
+            nztimes, microsecond = utcdatetime_to_sac_nztimes(reftime)
+            header.update(nztimes)
+            b += (microsecond * 1e-6)
 
-        # merge some values from stats if they're missing in the SAC header
+        header['b'] = b
+        header['e'] = b + (stats['endtime'] - stats['starttime'])
+
+        # Merge some values from stats if they're missing in the SAC header
         # ObsPy issues 1204, 1457
         # XXX: If Stats values are empty/"" and SAC header values are real,
         #   this will replace the real SAC values with SAC null values.
-        # TODO: make this operation into a private helper function
         for sachdr, statshdr in [('kstnm', 'station'), ('knetwk', 'network'),
                                  ('kcmpnm', 'channel'), ('khole', 'location')]:
             if (header.get(sachdr) in (None, HD.SNULL)) or \
                (header.get(sachdr).strip() != stats[statshdr]):
                 header[sachdr] = stats[statshdr] or HD.SNULL
-
     else:
-        # SAC header from scratch.  Just use Stats.
+        # SAC header from Stats only.
 
         # Here, set headers from Stats that would otherwise depend on the old
         # SAC header
