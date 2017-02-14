@@ -136,7 +136,7 @@ class MSEEDUtilTestCase(unittest.TestCase):
 
     def test_convert_datetime2(self):
         """
-        Some failing test discoverd in #1670
+        Some failing test discovered in #1670
         """
         # 1
         dt = UTCDateTime(ns=1487021451935737333)
